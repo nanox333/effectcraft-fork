@@ -58,7 +58,8 @@ receive `resultType: complete` and list/read cache hints; document reads are nev
 was. `renderQueue.checkOutputs` lists beforehand the outputs that would replace files and the
 ones that are files the project reads. Those are never replaced, with `overwrite` or without: the
 item fails with the reason (the other items render), the reply lists it under `refused` and its
-status is `Failed`.
+status is `Failed`. Two outputs of one job that write the same file (listed under `duplicates`)
+refuse the whole render, with or without `overwrite`.
 
 ## Progress and cancellation
 

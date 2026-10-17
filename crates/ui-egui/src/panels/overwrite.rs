@@ -3,6 +3,8 @@
 //! offers Replace or Cancel. Agents running `renderQueue.render` with `engine.execute` are never
 //! asked: the engine refuses until they pass `overwrite: true`. Footage is never replaced, and the
 //! engine says so itself (the item fails with the reason), so there is nothing to ask about it.
+//! Nor is there when two items of the queue write one file: Replace could not make that right, so
+//! the prompt stays closed and the engine's refusal (naming both items) goes to the status bar.
 //!
 //! Automation ids: `dialog.overwrite.replace`, `dialog.overwrite.cancel`. Escape cancels.
 
@@ -31,8 +33,15 @@ pub struct Pending {
     pub command: Option<(Value, Vec<Output>)>,
 }
 
-/// The outputs the queue would replace right now (`renderQueue.checkOutputs`' `existing`); `None` when the check fails.
-fn current_outputs(app: &mut EffectcraftApp) -> Option<Vec<Output>> {
+/// What `renderQueue.checkOutputs` says about the queue right now.
+struct Check {
+    /// The outputs that would replace files (`existing`).
+    existing: Vec<Output>,
+    /// Two outputs of the job name one file (`duplicates`): no answer helps, and the engine refuses the render.
+    duplicates: bool,
+}
+
+fn check(app: &mut EffectcraftApp) -> Option<Check> {
     let found = app.session.execute("renderQueue.checkOutputs", json!({})).ok()?;
     let existing = found["existing"]
         .as_array()
@@ -42,7 +51,12 @@ fn current_outputs(app: &mut EffectcraftApp) -> Option<Vec<Output>> {
             Some(Output { path: e["path"].as_str()?.to_string(), files: e["files"].as_u64().unwrap_or(1), sequence: e["sequence"].as_bool().unwrap_or(false) })
         })
         .collect();
-    Some(existing)
+    Some(Check { existing, duplicates: found["duplicates"].as_array().is_some_and(|d| !d.is_empty()) })
+}
+
+/// The outputs the queue would replace right now; `None` when the check fails.
+fn current_outputs(app: &mut EffectcraftApp) -> Option<Vec<Output>> {
+    check(app).map(|check| check.existing)
 }
 
 /// Whether `id` needs the prompt first. When it does, the prompt opens holding the command and
@@ -51,8 +65,13 @@ pub fn guard(app: &mut EffectcraftApp, id: &str, params: &Value) -> bool {
     if id != "renderQueue.render" || params.get("overwrite").and_then(Value::as_bool) == Some(true) || !app.session.is_enabled(id) {
         return false;
     }
-    let Some(existing) = current_outputs(app).filter(|existing| !existing.is_empty()) else { return false };
-    app.dialog_state.overwrite.command = Some((params.clone(), existing));
+    let Some(check) = check(app) else { return false };
+    // Two outputs on one file refuse the render whatever the answer: nothing to ask, the engine
+    // says why (the status bar shows it).
+    if check.duplicates || check.existing.is_empty() {
+        return false;
+    }
+    app.dialog_state.overwrite.command = Some((params.clone(), check.existing));
     app.dialog = Some(Dialog::Overwrite);
     true
 }
