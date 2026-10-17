@@ -784,6 +784,10 @@ fn render(args: &Args, json_out: bool) -> Result<(), Failure> {
     let overwrite = args.flag("--overwrite");
     if !overwrite {
         let found = s.execute("renderQueue.checkOutputs", json!({})).map_err(err)?;
+        // Two outputs on one file are refused by the render itself, whatever the flag: let it say so
+        // rather than ask for --overwrite first.
+        let clash = found["duplicates"].as_array().is_some_and(|d| !d.is_empty());
+        let found = if clash { json!({}) } else { found };
         let existing: Vec<&str> = found["existing"].as_array().into_iter().flatten().filter_map(|e| e["path"].as_str()).collect();
         match existing.as_slice() {
             [] => {}

@@ -368,6 +368,40 @@ fn render_replaces_a_file_only_with_overwrite_and_never_footage() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Two queue items on one file are refused by the render itself, also when that file exists:
+/// `--overwrite` is not what the message asks for.
+#[test]
+fn render_refuses_two_items_on_one_file_without_asking_for_overwrite() {
+    let root = tmp("render-clash");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let out = root.join("clash.mp4");
+    std::fs::write(&out, b"EARLIER").unwrap();
+    let project = root.join("p.ecproj");
+    let p = project.to_str().unwrap();
+    let add = json!({"output": out.to_str().unwrap()}).to_string();
+    ok_json(&[
+        "run",
+        "comp.new",
+        r#"{"name":"T","width":64,"height":36,"duration":1}"#,
+        "renderQueue.add",
+        &add,
+        "renderQueue.add",
+        &add,
+        "--empty",
+        "--save-as",
+        p,
+    ]);
+    for extra in [&[][..], &["--overwrite"][..]] {
+        let (code, v) = run_json(&[&["render", "--queue", "--project", p][..], extra].concat());
+        assert_eq!(code, 1, "{extra:?}: {v}");
+        let error = v["error"].as_str().unwrap();
+        assert!(error.contains("#1") && error.contains("#2") && error.contains("clash.mp4") && !error.contains("already exists"), "{extra:?}: {v}");
+        assert_eq!(std::fs::read(&out).unwrap(), b"EARLIER", "{extra:?}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A real stdio client: each edit's reply is read before disconnecting or killing the server.
 struct McpChild {
     child: std::process::Child,
