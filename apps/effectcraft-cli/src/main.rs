@@ -15,7 +15,9 @@
 //!     [--jpeg-quality N] [--bitrate KBPS] [--prores proxy|lt|standard|hq|4444|4444xq] [--audio auto|on|off]
 //!     [--profile main|main10] [--level auto|4.1] [--rate-control bitrate|quality] [--video-quality 1-100]
 //!     [--keyint FRAMES] [--webm-codec vp9|av1] [--audio-bitrate KBPS] [--opus-app audio|voice]
-//!     (a relative --out is relative to the working directory; --queue outputs follow the project's own settings)
+//!     [--overwrite]
+//!     (a relative --out is relative to the working directory; --queue outputs follow the project's own settings;
+//!     a file that exists is replaced only with --overwrite, and the project's footage and file never are)
 //! effectcraft-cli render --template T.ectemplate [--values V.json] --out FILE
 //! effectcraft-cli render-frame --template T.ectemplate [--values V.json] [--time S] [--out F.png]
 //! effectcraft-cli render F.ecproj --queue                    render the project's Render Queue
@@ -102,10 +104,11 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
          [--resolution full|half|third|quarter|K] [--quality best|draft] [--channels rgb|rgba]
          [--jpeg-quality N] [--bitrate KBPS] [--prores PROFILE] [--audio auto|on|off]
          [--profile main|main10] [--level auto|4.1] [--rate-control bitrate|quality] [--video-quality N]
-         [--keyint FRAMES] [--webm-codec vp9|av1] [--audio-bitrate KBPS] [--opus-app audio|voice] | --queue
+         [--keyint FRAMES] [--webm-codec vp9|av1] [--audio-bitrate KBPS] [--opus-app audio|voice] [--overwrite] | --queue
                                            (formats h264|hevc|av1|prores|webm|png|jpeg|tiff|exr|gif|wav|aiff;
                                            --profile..--keyint: HEVC / AV1, --audio-bitrate/--opus-app: WebM Opus)
-                                           a relative --out is relative to the working directory
+                                           a relative --out is relative to the working directory;
+                                           a file that exists is replaced only with --overwrite (footage never is)
   render/render-frame --template T.ectemplate [--values V.json]   render one template instance
   bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--gpu [--adv3d]]   per-layer/effect render timings;
                                            --play N renders N consecutive frames with/without the layer cache;
@@ -185,6 +188,7 @@ const FLAGS: &[&str] = &[
     "--transparent",
     "--work-area",
     "--queue",
+    "--overwrite",
     "--ops",
     "--small",
     "--adv3d",
@@ -770,7 +774,23 @@ fn render(args: &Args, json_out: bool) -> Result<(), Failure> {
             r["outputModuleSummary"].as_str().unwrap_or("")
         );
     }
-    s.execute("renderQueue.render", json!({"wait": false})).map_err(err)?;
+    // A file that exists is replaced only with --overwrite. The engine refuses without it; asked
+    // first, it names the flag this command has.
+    let overwrite = args.flag("--overwrite");
+    if !overwrite {
+        let found = s.execute("renderQueue.checkOutputs", json!({})).map_err(err)?;
+        let existing: Vec<&str> = found["existing"].as_array().into_iter().flatten().filter_map(|e| e["path"].as_str()).collect();
+        match existing.as_slice() {
+            [] => {}
+            [only] => return Err(Failure::Error(format!("{only} already exists; pass --overwrite to replace it"))),
+            [first, ..] => {
+                return Err(Failure::Error(format!("{} outputs already exist (first: {first}); pass --overwrite to replace them", existing.len())));
+            }
+        }
+    }
+    let started = s.execute("renderQueue.render", json!({"wait": false, "overwrite": overwrite})).map_err(err)?;
+    // Items refused because their output is a file the project reads (the others render).
+    let mut failed: Vec<String> = started["refused"].as_array().into_iter().flatten().filter_map(|r| r["reason"].as_str().map(String::from)).collect();
     let tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
     while s.is_rendering() {
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -794,7 +814,6 @@ fn render(args: &Args, json_out: bool) -> Result<(), Failure> {
         note!();
     }
     let mut results = vec![];
-    let mut failed = vec![];
     for it in s.project.render_queue.iter().filter(|i| i.render && i.started.is_some()) {
         let name = s.project.item(it.comp).map(|i| i.name.clone()).unwrap_or_else(|| "?".into());
         match &it.status {
