@@ -309,7 +309,17 @@ build real projects through these interfaces; they are worked examples of everyt
   `footage_1.mp4`); a name you give is kept, and rendering it is refused. The desktop app asks
   Replace or Cancel when you press Render (`dialog.overwrite.replace`, `dialog.overwrite.cancel`;
   `ui.menu.invoke renderQueue.render` opens the same prompt), and `effectcraft-cli render` needs
-  `--overwrite` to replace a file. A watched folder (`file.watchFolder`) renders unattended and
+  `--overwrite` to replace a file. **A render never writes one file twice either:** when two
+  outputs of the job (two items, a `renderQueue.duplicate` copy, output modules, segments) name
+  the same file, the whole render is refused before anything is written, `overwrite` or not
+  (that flag is for files that exist). `renderQueue.checkOutputs` lists them under `duplicates`
+  (`{item, index, comp, path, files, sequence, with: {item, index, comp}, reason}`; `with` is the
+  output written first). Sequences clash only on frames both write, and a later item with Skip
+  Existing Files leaves the earlier one's frames alone. Default names are numbered like footage
+  collisions when another queue item writes them (`renderQueue.add`, `render.preRender`,
+  `comp.saveFrameAs {queue}`, `file.createProxy`: a second `Main` renders to `Main_1.mp4`); a name
+  you give is kept, and `renderQueue.duplicate` copies the output as it is, so change one with
+  `renderQueue.setOutput` or turn it off. A watched folder (`file.watchFolder`) renders unattended and
   replaces the outputs of a project it renders again. Scripts: `renderQueue.render(true)`.
 * **Other files written to a path you give** follow the same footage rule, with no flag and no
   prompt: `comp.saveFrameAs` (also `…Psd`, `…Exr`), `file.exportLottie`, `file.saveCopy`,

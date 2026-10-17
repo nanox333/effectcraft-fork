@@ -3,6 +3,8 @@
 //! offers Replace or Cancel. Agents running `renderQueue.render` with `engine.execute` are never
 //! asked: the engine refuses until they pass `overwrite: true`. Footage is never replaced, and the
 //! engine says so itself (the item fails with the reason), so there is nothing to ask about it.
+//! Nor is there when two items of the queue write one file: Replace could not make that right, so
+//! the prompt stays closed and the engine's refusal (naming both items) goes to the status bar.
 //!
 //! Automation ids: `dialog.overwrite.replace`, `dialog.overwrite.cancel`. Escape cancels.
 
@@ -38,6 +40,11 @@ pub fn guard(app: &mut EffectcraftApp, id: &str, params: &Value) -> bool {
         return false;
     }
     let Ok(found) = app.session.execute("renderQueue.checkOutputs", json!({})) else { return false };
+    // Two outputs on one file refuse the render whatever the answer: nothing to ask, the engine
+    // says why (the status bar shows it).
+    if found["duplicates"].as_array().is_some_and(|d| !d.is_empty()) {
+        return false;
+    }
     let existing: Vec<Output> = found["existing"]
         .as_array()
         .into_iter()

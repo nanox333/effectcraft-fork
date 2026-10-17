@@ -223,3 +223,29 @@ fn an_output_that_is_footage_fails_without_asking() {
     assert!(why.contains("footage"), "{why}");
     assert!(r.h.state().ui.status.contains("footage"), "the status bar says why: {}", r.h.state().ui.status);
 }
+
+/// Two queue items that write one file are refused as a whole: Replace could not help (the render
+/// would replace its own output), so the prompt does not open, even with the file there already,
+/// and the status bar names the two items.
+#[test]
+fn two_items_writing_one_file_are_refused_without_asking_to_replace() {
+    for earlier in [false, true] {
+        let mut r = Rig::new(&format!("clash-{earlier}"), earlier);
+        let out = r.dir.join("main.mp4").to_string_lossy().into_owned();
+        r.h.state_mut().session.execute("renderQueue.add", json!({"output": out})).unwrap();
+        r.h.run_steps(2);
+        r.click("renderQueue.render");
+        assert_eq!(r.h.state().dialog, None, "earlier: {earlier}: no Replace for a clash");
+        assert_eq!(r.exported(), 0, "earlier: {earlier}");
+        assert_eq!(r.status(), RenderStatus::Queued, "earlier: {earlier}");
+        assert_eq!(r.h.state().session.project.render_queue.len(), 2);
+        assert_eq!(std::fs::read(r.dir.join("main.mp4")).ok(), earlier.then(|| EARLIER.to_vec()), "earlier: {earlier}: nothing was written");
+        let status = r.h.state().ui.status.clone();
+        assert!(status.contains("#1") && status.contains("#2") && status.contains("main.mp4"), "the status bar says why: {status}");
+        // The menu path reports the same refusal instead of opening a dialog.
+        let v = r.send("ui.menu.invoke", json!({"id": "renderQueue.render"}));
+        assert_eq!(v["ok"], false, "{v}");
+        assert!(v["error"].as_str().unwrap_or_default().contains("main.mp4"), "{v}");
+        assert_eq!(r.h.state().dialog, None);
+    }
+}

@@ -499,8 +499,10 @@ impl Session {
 
     /// [`Session::start_render`], told whether files that exist may be replaced. A render never
     /// replaces a file the project reads, whatever `overwrite` says: such an item fails on its
-    /// own, with the reason, and the others render. Without `overwrite`, any other file that
-    /// exists refuses the whole render before anything changes ([`crate::output_guard`]).
+    /// own, with the reason, and the others render. Nor does it write one file twice: outputs of
+    /// the job that name the same file refuse the whole render, whatever `overwrite` says. Without
+    /// `overwrite`, any other file that exists refuses the whole render before anything changes
+    /// ([`crate::output_guard`]).
     pub fn start_render_with(&mut self, wait: bool, overwrite: bool) -> Result<RenderStart, String> {
         let offload = self.offload.clone().filter(|_| !wait);
         let wait = wait || (cfg!(target_arch = "wasm32") && offload.is_none());
@@ -512,6 +514,11 @@ impl Session {
         let formats = exporter.formats();
         let (mut items, mut problems) = self.queued_outputs(&formats);
         let check = self.check_outputs(&items);
+        // Two outputs of this job on one file: `overwrite` is for files that exist, and here the
+        // render would replace its own output, so it can't answer.
+        if let Some(refusal) = check.duplicate_refusal() {
+            return Err(refusal);
+        }
         if !overwrite && let Some(refusal) = check.existing_refusal() {
             return Err(refusal);
         }
