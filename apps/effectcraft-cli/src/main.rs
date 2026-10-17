@@ -615,6 +615,8 @@ fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
                 }
             }
             let out = args.opt("--out").unwrap_or("frame.png").to_string();
+            // Never over footage, a proxy or the project file (checked before rendering).
+            b.check_output(&out)?;
             let t0 = std::time::Instant::now();
             let f = b.render_with(comp.as_ref(), time, max_side, args.flag("--transparent"))?;
             let ms = t0.elapsed().as_secs_f64() * 1000.0;

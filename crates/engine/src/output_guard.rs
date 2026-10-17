@@ -6,6 +6,11 @@
 //! ([`Session::check_outputs`]): `renderQueue.checkOutputs` reports them, `renderQueue.render`
 //! refuses on them, and the desktop app asks Replace or Cancel first (`panels::overwrite`).
 //!
+//! The commands that write to a path they are given (Save Frame As, Export Lottie, Save a Copy,
+//! Collect Files, Export Timeline…) never replace one of those files either, with no flag:
+//! they write through [`Session::write_output`], the one place that checks. Save and Save As
+//! write the project's own file and do not.
+//!
 //! Files are compared as the file system sees them: through links, and without regard to case
 //! where the volume ignores it (Windows, macOS). Footage that is not on disk is compared by name
 //! alone. A hard link to footage under another name is the same file on disk, and is recognised by
@@ -35,6 +40,15 @@ const PROBE_LIMIT: u64 = 100_000;
 /// render time.
 const MAX_NUMBER: u32 = 1_000;
 
+/// What a file is written for, which words a refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Use {
+    /// A Render Queue output (or a preview render): the fix is Output To.
+    Render,
+    /// Anything else written to a path: a frame, an export, a copy.
+    Export,
+}
+
 /// What reads a file the project depends on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Source {
@@ -56,12 +70,19 @@ impl Source {
         }
     }
 
-    /// Why `path`, a file this reads, cannot be a render's output.
-    pub(crate) fn refusal(&self, path: &str) -> String {
-        match self {
-            Source::Footage(name) => format!("{path} is the footage “{name}” of this project, and a render never replaces footage; choose another Output To"),
-            Source::Proxy(name) => format!("{path} is the proxy of “{name}”, and a render never replaces a proxy; choose another Output To"),
-            Source::Project => format!("{path} is this project's own file, and a render never replaces it; choose another Output To"),
+    /// Why `path`, a file this reads, cannot be written for `used`.
+    pub(crate) fn refusal(&self, path: &str, used: Use) -> String {
+        match (used, self) {
+            (Use::Render, Source::Footage(name)) => {
+                format!("{path} is the footage “{name}” of this project, and a render never replaces footage; choose another Output To")
+            }
+            (Use::Render, Source::Proxy(name)) => format!("{path} is the proxy of “{name}”, and a render never replaces a proxy; choose another Output To"),
+            (Use::Render, Source::Project) => format!("{path} is this project's own file, and a render never replaces it; choose another Output To"),
+            (Use::Export, Source::Footage(name)) => {
+                format!("{path} is the footage “{name}” of this project, and footage is never written over; choose another file")
+            }
+            (Use::Export, Source::Proxy(name)) => format!("{path} is the proxy of “{name}”, and a proxy is never written over; choose another file"),
+            (Use::Export, Source::Project) => format!("{path} is this project's own file, which only Save writes; choose another file"),
         }
     }
 }
@@ -210,7 +231,7 @@ fn identity(path: &Path) -> Option<String> {
 }
 
 /// Whether two paths are one file: the same name once resolved, or the same file on disk.
-fn same_file(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     key(a) == key(b) || matches!((identity(a), identity(b)), (Some(x), Some(y)) if x == y)
 }
 
@@ -323,14 +344,55 @@ impl Session {
         Protected::of(self)
     }
 
-    /// `Err` with the reason when `path` is a file the project reads.
+    /// `Err` with the reason when `path` is a file the project reads (a render's wording).
     pub(crate) fn refuse_source(&self, path: &str) -> Result<(), String> {
-        if cfg!(target_arch = "wasm32") {
-            return Ok(());
-        }
-        match self.protected_files().find(Path::new(path)) {
-            Some(source) => Err(source.refusal(path)),
+        match self.blocking(path) {
+            Some(source) => Err(source.refusal(path, Use::Render)),
             None => Ok(()),
+        }
+    }
+
+    /// What reads the file at `path`, if the project does.
+    fn blocking(&self, path: &str) -> Option<Source> {
+        if cfg!(target_arch = "wasm32") {
+            return None;
+        }
+        self.protected_files().find(Path::new(path)).cloned()
+    }
+
+    /// `Err` when `path` is a file the project reads (footage, a proxy, the project file) and so
+    /// is not for an export to replace. For callers that write the file themselves; call it
+    /// before the work, not after it.
+    pub fn refuse_export(&self, path: &str) -> crate::Result<()> {
+        match self.blocking(path) {
+            Some(source) => Err(crate::EngineError::Other(source.refusal(path, Use::Export))),
+            None => Ok(()),
+        }
+    }
+
+    /// Write `bytes` to `path` through the host's services, unless the project reads the file
+    /// there ([`Session::refuse_export`]). Every command that writes to a path it is given
+    /// writes through this; Save and Save As (the project's own file) do not.
+    pub fn write_output(&self, path: &str, bytes: &[u8]) -> crate::Result<()> {
+        self.write_output_with(&self.protected_files(), path, bytes)
+    }
+
+    /// [`Session::write_output`] against files already found ([`Session::protected_files`]),
+    /// for a command that writes many.
+    pub(crate) fn write_output_with(&self, protected: &Protected, path: &str, bytes: &[u8]) -> crate::Result<()> {
+        if !cfg!(target_arch = "wasm32")
+            && let Some(source) = protected.find(Path::new(path))
+        {
+            return Err(crate::EngineError::Other(source.refusal(path, Use::Export)));
+        }
+        self.services.write_file(path, bytes).map_err(|e| crate::EngineError::Other(format!("cannot write {path}: {e}")))
+    }
+
+    /// `file.checkOutput`'s reply for `path`.
+    pub(crate) fn output_status(&self, path: &str) -> Value {
+        match self.blocking(path) {
+            Some(source) => json!({"path": path, "blocked": true, "source": source.kind(), "reason": source.refusal(path, Use::Export)}),
+            None => json!({"path": path, "blocked": false}),
         }
     }
 
@@ -375,7 +437,7 @@ impl Session {
         let hit = there.iter().map(PathBuf::as_path).chain(by_name).chain(Some(Path::new(&log))).find_map(|p| protected.find(p).map(|source| (p, source)));
         if let Some((blocked, source)) = hit {
             let shown = blocked.to_string_lossy().into_owned();
-            check.blocked.push(BlockedOutput { item: m.id, index, comp, source: source.kind(), reason: source.refusal(&shown), path: shown });
+            check.blocked.push(BlockedOutput { item: m.id, index, comp, source: source.kind(), reason: source.refusal(&shown, Use::Render), path: shown });
         } else if !there.is_empty() {
             check.existing.push(ExistingOutput { item: m.id, index, comp, path: path.to_string(), files: there.len() as u64, sequence });
         }
