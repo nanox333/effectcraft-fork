@@ -368,6 +368,35 @@ fn render_replaces_a_file_only_with_overwrite_and_never_footage() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// #1743: `render-frame --out` writes a PNG to the path it is given, and never over footage or
+/// the project file.
+#[test]
+fn render_frame_never_writes_over_footage_or_the_project() {
+    let root = tmp("render-frame-overwrite");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let (clip, project) = (root.join("clip.png"), root.join("p.ecproj"));
+    let (c, p) = (clip.to_str().unwrap(), project.to_str().unwrap());
+    // A real PNG to import: a frame of the demo project.
+    ok_json(&["render-frame", "--max-side", "64", "--out", c]);
+    let imported = json!({"paths": [c]}).to_string();
+    ok_json(&["run", "file.import", &imported, "comp.new", r#"{"name":"T","width":64,"height":36,"duration":1}"#, "--empty", "--save-as", p]);
+    let (footage, saved) = (std::fs::read(&clip).unwrap(), std::fs::read(&project).unwrap());
+    for (out, what) in [(c, "footage"), (p, "project")] {
+        let (code, v) = run_json(&["render-frame", "--project", p, "--out", out]);
+        assert_eq!(code, 1, "{what}: {v}");
+        let error = v["error"].as_str().unwrap();
+        assert!(error.contains(out) && error.contains(what), "{what}: {v}");
+    }
+    assert_eq!(std::fs::read(&clip).unwrap(), footage, "the footage is as it was");
+    assert_eq!(std::fs::read(&project).unwrap(), saved, "the project file is as it was");
+    // Anywhere else it writes.
+    let free = root.join("frame.png");
+    ok_json(&["render-frame", "--project", p, "--out", free.to_str().unwrap()]);
+    assert_eq!(&std::fs::read(&free).unwrap()[..8], b"\x89PNG\r\n\x1a\n");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A real stdio client: each edit's reply is read before disconnecting or killing the server.
 struct McpChild {
     child: std::process::Child,

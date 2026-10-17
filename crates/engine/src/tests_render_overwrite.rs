@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::{ExportJob, ExportResult, Exporter, Session};
 
-const SOURCE: &[u8] = b"SOURCE FOOTAGE";
+pub(crate) const SOURCE: &[u8] = b"SOURCE FOOTAGE";
 const EARLIER: &[u8] = b"AN EARLIER RENDER";
 const RENDERED: &[u8] = b"RENDERED";
 
@@ -52,14 +52,14 @@ impl Exporter for Writer {
 
 /// A session whose project is saved in a fresh folder (the footage goes there too), with an
 /// exporter that writes real files.
-struct Fixture {
-    s: Session,
+pub(crate) struct Fixture {
+    pub(crate) s: Session,
     writer: Arc<Writer>,
-    dir: PathBuf,
+    pub(crate) dir: PathBuf,
 }
 
 impl Fixture {
-    fn new(name: &str) -> Fixture {
+    pub(crate) fn new(name: &str) -> Fixture {
         let dir = std::env::temp_dir().join("effectcraft-render-overwrite").join(format!("{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -70,24 +70,24 @@ impl Fixture {
         Fixture { s, writer, dir }
     }
 
-    fn path(&self, file: &str) -> PathBuf {
+    pub(crate) fn path(&self, file: &str) -> PathBuf {
         self.dir.join(file)
     }
 
-    fn text(&self, file: &str) -> String {
+    pub(crate) fn text(&self, file: &str) -> String {
         self.path(file).to_string_lossy().into_owned()
     }
 
-    fn read(&self, file: &str) -> Vec<u8> {
+    pub(crate) fn read(&self, file: &str) -> Vec<u8> {
         std::fs::read(self.path(file)).unwrap()
     }
 
-    fn write(&self, file: &str, bytes: &[u8]) {
+    pub(crate) fn write(&self, file: &str, bytes: &[u8]) {
         std::fs::write(self.path(file), bytes).unwrap();
     }
 
     /// A video file in the project's folder, imported.
-    fn footage(&mut self, file: &str) -> ItemId {
+    pub(crate) fn footage(&mut self, file: &str) -> ItemId {
         self.write(file, SOURCE);
         let f = Footage {
             path: self.text(file),
@@ -103,9 +103,14 @@ impl Fixture {
 
     /// Numbered stills in the project's folder, imported as one image sequence.
     fn sequence(&mut self, name: &str, frames: std::ops::Range<u32>) -> ItemId {
+        self.sequence_as(name, "png", frames)
+    }
+
+    /// [`Fixture::sequence`] of files with extension `ext`.
+    pub(crate) fn sequence_as(&mut self, name: &str, ext: &str, frames: std::ops::Range<u32>) -> ItemId {
         let files: Vec<String> = frames
             .map(|n| {
-                let file = format!("{name}_{n:05}.png");
+                let file = format!("{name}_{n:05}.{ext}");
                 self.write(&file, SOURCE);
                 self.text(&file)
             })
@@ -120,11 +125,11 @@ impl Fixture {
             duration: Tick::from_seconds_f64(0.5),
             ..Default::default()
         };
-        Arc::make_mut(&mut self.s.project).add_item(&format!("{name}_[00000-00004].png"), Label::None, None, ItemKind::Footage(f))
+        Arc::make_mut(&mut self.s.project).add_item(&format!("{name}_[00000-00004].{ext}"), Label::None, None, ItemKind::Footage(f))
     }
 
     /// A five-frame composition.
-    fn comp(&mut self, name: &str) {
+    pub(crate) fn comp(&mut self, name: &str) {
         self.s.execute("comp.new", json!({"name": name, "width": 16, "height": 16, "frameRate": 10, "duration": 0.5})).unwrap();
     }
 
@@ -134,7 +139,7 @@ impl Fixture {
     }
 
     /// The paths the exporter was started for.
-    fn exported(&self) -> Vec<String> {
+    pub(crate) fn exported(&self) -> Vec<String> {
         self.writer.jobs.lock().unwrap().clone()
     }
 
