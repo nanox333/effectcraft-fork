@@ -31,14 +31,10 @@ pub struct Pending {
     pub command: Option<(Value, Vec<Output>)>,
 }
 
-/// Whether `id` needs the prompt first. When it does, the prompt opens holding the command and
-/// the caller must not run it (it runs once the user answers Replace).
-pub fn guard(app: &mut EffectcraftApp, id: &str, params: &Value) -> bool {
-    if id != "renderQueue.render" || params.get("overwrite").and_then(Value::as_bool) == Some(true) || !app.session.is_enabled(id) {
-        return false;
-    }
-    let Ok(found) = app.session.execute("renderQueue.checkOutputs", json!({})) else { return false };
-    let existing: Vec<Output> = found["existing"]
+/// The outputs the queue would replace right now (`renderQueue.checkOutputs`' `existing`); `None` when the check fails.
+fn current_outputs(app: &mut EffectcraftApp) -> Option<Vec<Output>> {
+    let found = app.session.execute("renderQueue.checkOutputs", json!({})).ok()?;
+    let existing = found["existing"]
         .as_array()
         .into_iter()
         .flatten()
@@ -46,9 +42,16 @@ pub fn guard(app: &mut EffectcraftApp, id: &str, params: &Value) -> bool {
             Some(Output { path: e["path"].as_str()?.to_string(), files: e["files"].as_u64().unwrap_or(1), sequence: e["sequence"].as_bool().unwrap_or(false) })
         })
         .collect();
-    if existing.is_empty() {
+    Some(existing)
+}
+
+/// Whether `id` needs the prompt first. When it does, the prompt opens holding the command and
+/// the caller must not run it (it runs once the user answers Replace).
+pub fn guard(app: &mut EffectcraftApp, id: &str, params: &Value) -> bool {
+    if id != "renderQueue.render" || params.get("overwrite").and_then(Value::as_bool) == Some(true) || !app.session.is_enabled(id) {
         return false;
     }
+    let Some(existing) = current_outputs(app).filter(|existing| !existing.is_empty()) else { return false };
     app.dialog_state.overwrite.command = Some((params.clone(), existing));
     app.dialog = Some(Dialog::Overwrite);
     true
@@ -116,7 +119,19 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
     if replace {
         // The answer goes with this request, so it can't carry over to a later render.
         let mut params = if params.is_object() { params } else { json!({}) };
-        params["overwrite"] = json!(true);
+        // Replace answers for the files this prompt listed. If the queue's outputs changed while it was open (an agent
+        // can run `renderQueue.setOutput` over the control channel), the answer does not reach the new ones: the prompt
+        // asks again about what is there now.
+        match current_outputs(app) {
+            Some(now) if now == outputs => params["overwrite"] = json!(true),
+            Some(now) if !now.is_empty() => {
+                app.dialog_state.overwrite.command = Some((params, now));
+                app.dialog = Some(Dialog::Overwrite);
+                return;
+            }
+            // Nothing left to replace, or the check failed: no permission to replace is given, and the engine decides.
+            _ => {}
+        }
         if let Err(e) = crate::menus::invoke(app, ctx, "renderQueue.render", params) {
             app.ui.status = e;
         }

@@ -173,6 +173,44 @@ fn replace_renders_over_the_existing_file() {
     assert_eq!(r.h.state().dialog, Some(Dialog::Overwrite), "asks again");
 }
 
+/// Replace answers for the files the prompt listed. An agent can point the queue at another file while it is open
+/// (`engine.execute` of `renderQueue.setOutput`); the answer must not carry over to that file.
+#[test]
+fn replace_does_not_cover_an_output_that_changed_while_the_prompt_was_open() {
+    let mut r = Rig::new("changed", true);
+    let other = r.dir.join("other.mp4");
+    std::fs::write(&other, EARLIER).unwrap();
+    r.click("renderQueue.render");
+    assert_eq!(r.h.state().dialog, Some(Dialog::Overwrite));
+    let v = r.send("engine.execute", json!({"command": "renderQueue.setOutput", "params": {"path": other.to_string_lossy()}}));
+    assert_eq!(v["ok"], true, "{v}");
+    r.click("dialog.overwrite.replace");
+    // the answer was about main.mp4: nothing was replaced, and the prompt asks again, now about other.mp4
+    assert_eq!(r.exported(), 0, "nothing was rendered");
+    assert_eq!(std::fs::read(&other).unwrap(), EARLIER, "the new file was not replaced");
+    assert_eq!(r.h.state().dialog, Some(Dialog::Overwrite), "it asks again");
+    // answering for what it shows now replaces that file
+    r.click("dialog.overwrite.replace");
+    assert_eq!(r.h.state().dialog, None);
+    r.finish();
+    assert_eq!(std::fs::read(&other).unwrap(), RENDERED);
+    assert_eq!(r.exported(), 1);
+}
+
+/// If what the prompt listed is gone by the time Replace is pressed, the render just runs.
+#[test]
+fn replace_with_nothing_left_to_replace_just_renders() {
+    let mut r = Rig::new("gone", true);
+    r.click("renderQueue.render");
+    assert_eq!(r.h.state().dialog, Some(Dialog::Overwrite));
+    std::fs::remove_file(r.dir.join("main.mp4")).unwrap();
+    r.click("dialog.overwrite.replace");
+    assert_eq!(r.h.state().dialog, None, "nothing to ask about");
+    r.finish();
+    assert_eq!(r.file(), RENDERED);
+    assert_eq!(r.exported(), 1);
+}
+
 /// Anything that starts a render through the UI asks like the button; the command run as an
 /// agent runs it (`engine.execute`) is refused instead, and replaces the file when told to.
 #[test]
