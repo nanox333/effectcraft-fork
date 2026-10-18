@@ -3375,7 +3375,7 @@ const PORTUGUESE: &[(&str, &str)] = &[
         "{} files that this render writes already exist. Do you want to replace them?",
         "Esta renderização grava arquivos que já existem (quantidade: {}). Deseja substituí-los?",
     ),
-    ("{} ({} frames)", "{} ({} frames)"),
+    ("{} ({} frames)", "{} ({} quadros)"),
     ("and {} more", "e mais {}"),
     ("Replacing it can't be undone.", "A substituição não pode ser desfeita."),
     ("Replacing them can't be undone.", "A substituição não pode ser desfeita."),
