@@ -8,9 +8,11 @@
 //!
 //! Files are compared as the file system sees them: through links, and without regard to case
 //! where the volume ignores it (Windows, macOS). Footage that is not on disk is compared by name
-//! alone. A hard link to footage under another name is not recognised, and nothing stops a file
-//! from appearing between the check and the write. The browser build downloads what it renders and
-//! has no files to replace, so it is not checked.
+//! alone. A hard link to footage under another name is the same file on disk, and is recognised by
+//! the volume's own identity for it, asked only of an existing output of the size of some footage (a
+//! render to a new file costs one look). Nothing stops a file from appearing between the check and
+//! the write. The browser build downloads what it renders and has no files to replace, so it is not
+//! checked.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -71,6 +73,10 @@ pub(crate) struct Protected {
     /// Indexes into `files` by lower-cased file name: the only files another path can be the same
     /// as, short of a link.
     by_name: HashMap<String, Vec<usize>>,
+    /// Indexes into `files` of the ones that exist, by size, made when first needed: a hard link has the size of
+    /// the file it leads to, so only files of that size are asked whether they are the same file.
+    #[cfg(not(target_arch = "wasm32"))]
+    by_size: std::sync::OnceLock<HashMap<u64, Vec<usize>>>,
 }
 
 impl Protected {
@@ -116,11 +122,39 @@ impl Protected {
             return None;
         }
         let same = |candidate: &Path| self.named(candidate).find(|(known, _)| same_file(candidate, known)).map(|(_, source)| source);
-        same(path).or_else(|| {
-            // A link is another name for what it leads to.
-            let is_link = std::fs::symlink_metadata(path).ok()?.file_type().is_symlink();
-            if is_link { same(&std::fs::canonicalize(path).ok()?) } else { None }
-        })
+        same(path)
+            .or_else(|| {
+                // A link is another name for what it leads to.
+                let is_link = std::fs::symlink_metadata(path).ok()?.file_type().is_symlink();
+                if is_link { same(&std::fs::canonicalize(path).ok()?) } else { None }
+            })
+            .or_else(|| self.alias_of(path))
+    }
+
+    /// What reads the file at `path` under another name: a hard link, which only the volume can tell is the same file.
+    /// Only a file that exists is asked about, and only against the known files of its size.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn alias_of(&self, path: &Path) -> Option<&Source> {
+        let size = std::fs::metadata(path).ok().filter(|m| m.is_file())?.len();
+        let by_size = self.by_size.get_or_init(|| {
+            let mut sizes: HashMap<u64, Vec<usize>> = HashMap::new();
+            for (i, (known, _)) in self.files.iter().enumerate() {
+                if let Ok(meta) = std::fs::metadata(known)
+                    && meta.is_file()
+                {
+                    sizes.entry(meta.len()).or_default().push(i);
+                }
+            }
+            sizes
+        });
+        let candidates = by_size.get(&size)?;
+        candidates.iter().filter_map(|i| self.files.get(*i)).find(|(known, _)| same_file::is_same_file(path, known).unwrap_or(false)).map(|(_, source)| source)
+    }
+
+    /// The browser build has no files to compare.
+    #[cfg(target_arch = "wasm32")]
+    fn alias_of(&self, _: &Path) -> Option<&Source> {
+        None
     }
 
     /// The files whose name is `path`'s, whatever its case.

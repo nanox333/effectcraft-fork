@@ -409,6 +409,42 @@ fn a_link_to_the_footage_is_the_footage() {
     assert!(std::fs::symlink_metadata(&alias).unwrap().file_type().is_symlink(), "the link was not replaced either");
 }
 
+/// A hard link to the footage under another name is the same file on disk: replacing it would truncate the footage.
+#[test]
+fn a_hard_link_to_the_footage_is_the_footage() {
+    let mut f = Fixture::new("hardlink");
+    f.footage("clip.mov");
+    f.comp("Main");
+    if std::fs::hard_link(f.path("clip.mov"), f.path("render.mov")).is_err() {
+        eprintln!("this volume cannot make hard links: skipped");
+        return;
+    }
+    f.s.execute("renderQueue.add", json!({"format": "prores", "output": f.text("render.mov")})).unwrap();
+    let check = f.s.execute("renderQueue.checkOutputs", json!({})).unwrap();
+    assert_eq!(check["blocked"].as_array().map(Vec::len), Some(1), "refused, not merely existing: {check}");
+    assert_eq!(check["existing"].as_array().map(Vec::len), Some(0), "{check}");
+    // not even with overwrite
+    let e = f.render(json!({"overwrite": true})).unwrap_err().to_string();
+    assert!(e.contains("render.mov") && e.contains("footage"), "{e}");
+    assert_eq!(f.read("clip.mov"), SOURCE);
+    assert_eq!(f.read("render.mov"), SOURCE, "the other name still leads to the footage");
+    assert!(f.exported().is_empty(), "nothing was rendered");
+}
+
+/// A copy of the footage has its size and bytes, but it is another file: an earlier render may replace it.
+#[test]
+fn a_copy_of_the_footage_is_not_the_footage() {
+    let mut f = Fixture::new("copy");
+    f.footage("clip.mov");
+    f.comp("Main");
+    std::fs::copy(f.path("clip.mov"), f.path("copy.mov")).unwrap();
+    f.s.execute("renderQueue.add", json!({"format": "prores", "output": f.text("copy.mov")})).unwrap();
+    let e = f.render(json!({})).unwrap_err().to_string();
+    assert!(e.contains("already exists") && !e.contains("footage"), "an ordinary file that exists: {e}");
+    f.render(json!({"overwrite": true})).unwrap();
+    assert_eq!(f.read("clip.mov"), SOURCE, "the footage is as it was");
+}
+
 /// Footage imported through a linked folder is the same file as the one in the real folder.
 #[test]
 fn footage_reached_through_a_linked_folder_is_still_footage() {
