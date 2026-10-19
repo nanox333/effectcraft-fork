@@ -1312,10 +1312,11 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if context_layers.is_empty() {
             ui.label(crate::i18n::tr("No unlocked layer selected"));
         } else {
-            let source_layer = ui
-                .data(|d| d.get_temp::<Option<u64>>(menu_target_id))
-                .flatten()
-                .filter(|id| comp.layer(LayerId(*id)).is_some_and(|layer| layer.source.item().is_some()));
+            let menu_target = ui.data(|d| d.get_temp::<Option<u64>>(menu_target_id)).flatten();
+            let source_layer = match menu_target {
+                Some(id) => comp.layer(LayerId(id)).filter(|layer| layer.source.item().is_some()).map(|_| id),
+                None => context_layers.iter().find(|id| comp.layer(LayerId(**id)).is_some_and(|layer| layer.source.item().is_some())).copied(),
+            };
             let caps = context_layers.iter().filter_map(|id| comp.layer(effectcraft_engine::project::LayerId(*id))).fold(
                 super::timeline::LayerMenuCaps::default(),
                 |mut caps, layer| {
