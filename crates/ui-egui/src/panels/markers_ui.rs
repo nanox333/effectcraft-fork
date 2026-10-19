@@ -391,13 +391,24 @@ pub(crate) fn comp_markers(app: &mut EffectcraftApp, ui: &mut egui::Ui, comp: &C
 /// one undo step. Dropped back on the bin or outside the time graph's width, nothing is added.
 pub(crate) fn marker_bin(app: &mut EffectcraftApp, ui: &mut egui::Ui, comp: &Comp, tm: TMap, bin: Rect, strip: Rect) {
     let t = app.tokens;
-    let resp = ui.interact(bin, egui::Id::new("marker-bin"), Sense::drag()).on_hover_text(tr("Composition marker bin: drag a marker to the time ruler"));
+    let resp =
+        ui.interact(bin, egui::Id::new("marker-bin"), Sense::click_and_drag()).on_hover_text(tr("Composition marker bin: drag a marker to the time ruler"));
     app.auto.add("timeline.markerBin", bin, "Composition marker bin");
     let hot = resp.hovered() || resp.dragged();
     if hot {
         ui.ctx().set_cursor_icon(if resp.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
     }
     icons::paint(ui.painter(), bin, Icon::MarkerBin, if hot { t.icon_active } else { t.icon });
+    // Double-clicking the bin is the quick way to add a marker at the current playhead.  The
+    // pointer is still over the bin here, so this must happen before the drag preview's
+    // time-ruler hit test below.
+    if resp.double_clicked() {
+        let at = app.session.time().seconds().clamp(0.0, comp.duration.seconds());
+        if let Err(e) = app.session.execute("comp.addMarker", json!({"time": at})) {
+            app.ui.status = e.to_string();
+        }
+        return;
+    }
     let at = resp.interact_pointer_pos().filter(|p| p.x >= strip.min.x && p.x < strip.max.x).map(|p| {
         let snapped = snap(app, comp, tm, tm.t(p.x), MarkerRef { layer: None, index: usize::MAX });
         snapped.min(comp.duration.seconds())

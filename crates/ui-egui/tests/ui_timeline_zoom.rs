@@ -113,6 +113,17 @@ fn drag_with(h: &mut Harness<'_, EffectcraftApp>, from: Pos2, to: Pos2, modifier
     h.step();
 }
 
+/// Both clicks in one frame: the harness' frame time is longer than a double-click's.
+fn double_click(h: &mut Harness<'_, EffectcraftApp>, at: Pos2) {
+    h.event(Event::PointerMoved(at));
+    h.step();
+    for pressed in [true, false, true, false] {
+        h.input_mut().events.push(Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+    }
+    h.step();
+    h.run_steps(2);
+}
+
 /// The visible span (seconds) from the ruler's automation label ("start,pps") and width.
 fn visible(h: &Harness<'_, EffectcraftApp>) -> (f64, f64) {
     let e = h.state().auto.find("timeline.ruler").unwrap().clone();
@@ -362,6 +373,23 @@ fn dragging_out_of_the_marker_bin_adds_a_comp_marker() {
     h.event(Event::Text("*".into()));
     h.run_steps(2);
     assert_eq!(markers(&h), vec![13.0, 20.0]);
+}
+
+/// Double-clicking the composition marker bin adds one marker at the playhead, regardless of
+/// where the bin is positioned in the visible ruler.
+#[test]
+fn double_clicking_the_marker_bin_adds_at_the_playhead() {
+    let (mut h, _) = harness();
+    h.state_mut().ui.timeline.pps = Some(200.0);
+    h.state_mut().ui.timeline.start = 10.0;
+    h.state_mut().session.execute("time.set", json!({"time": 17.0})).unwrap();
+    h.run_steps(2);
+    let bin = rect(&h, "timeline.markerBin");
+    let undo = h.state().session.history.undo.len();
+    double_click(&mut h, bin.center());
+    let markers: Vec<f64> = h.state().session.active_comp().unwrap().markers.iter().map(|m| m.time.seconds()).collect();
+    assert_eq!(markers, vec![17.0]);
+    assert_eq!((h.state().session.history.undo.len(), h.state().session.history.undo.last().map(|u| u.0.as_str())), (undo + 1, Some("Add Marker")));
 }
 
 /// #976: as in After Effects, Numpad * marks the selected layers at the current time; only with
