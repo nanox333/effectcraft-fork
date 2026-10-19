@@ -4009,6 +4009,10 @@ pub(crate) fn layer_menu(
         item(ui, "Send Layer Backward", "layer.arrange", json!({"layers": layers, "to": "backward"}));
         item(ui, "Send Layer to Back", "layer.arrange", json!({"layers": layers, "to": "back"}));
     });
+    ui.menu_button(crate::i18n::tr("Reveal"), |ui| {
+        item(ui, "Reveal Layer Source in Project", "layer.revealSource", json!({"layer": id}));
+        item(ui, "Reveal Composition in Project", "comp.revealInProject", json!({}));
+    });
     ui.separator();
     item(ui, "Pre-compose…", "layer.precompose", json!({"layers": layers}));
     item(ui, "Duplicate", "edit.duplicate", json!({"layers": layers}));

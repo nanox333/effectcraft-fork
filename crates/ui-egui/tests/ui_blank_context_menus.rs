@@ -120,6 +120,24 @@ fn project_item_and_timeline_layer_keep_their_own_context_menus() {
 }
 
 #[test]
+fn timeline_layer_reveal_menu_selects_its_source_in_the_project_panel() {
+    let mut h = harness();
+    let layer = h.state_mut().session.execute("layer.newSolid", json!({"name": "Plate", "color": "#406080"})).unwrap()["layer"].as_u64().unwrap();
+    let source = h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(layer)).unwrap().source.item().unwrap();
+    h.run_steps(3);
+
+    let row = rect(&h, &format!("timeline.layer.{layer}.row"));
+    right_click(&mut h, pos2(row.min.x + 210.0, row.center().y));
+    let reveal = h.query_by_label("Reveal ⏵").expect("layer context menu has Reveal").rect();
+    h.input_mut().events.push(Event::PointerMoved(reveal.center()));
+    h.run_steps(3);
+    h.get_by_label("Reveal Layer Source in Project").click();
+    h.run_steps(3);
+
+    assert_eq!(h.state().session.state.project_selection, vec![source]);
+}
+
+#[test]
 fn project_blank_import_invokes_the_file_picker() {
     let mut h = harness();
     let called = std::rc::Rc::new(std::cell::Cell::new(false));
