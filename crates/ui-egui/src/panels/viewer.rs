@@ -1273,15 +1273,22 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // Interaction.
     let resp = ui.interact(area, egui::Id::new("viewer-interact"), Sense::click_and_drag());
     let menu_hits_id = egui::Id::new(("viewer-menu-hits", cid.0));
-    if resp.secondary_clicked()
-        && let Some(pos) = resp.interact_pointer_pos()
-    {
-        // Picking an already selected layer preserves the group; an unselected hit
-        // becomes the target, using the same visible/unlocked hit test as left-click.
-        pick(app, &ectx, map.to_comp(pos), false);
-        let point = map.to_comp(pos);
-        let hits: Vec<(u64, String)> = layers_at(&ectx, point).map(|l| (l.id.0, l.name.clone())).collect();
-        ui.data_mut(|d| d.insert_temp(menu_hits_id, hits));
+    let menu_target_id = egui::Id::new(("viewer-menu-target", cid.0));
+    if resp.secondary_clicked() {
+        let (target, hits) = if let Some(pos) = resp.interact_pointer_pos() {
+            // Picking an already selected layer preserves the group; an unselected hit
+            // becomes the target, using the same visible/unlocked hit test as left-click.
+            let target = pick(app, &ectx, map.to_comp(pos), false).map(|id| id.0);
+            let point = map.to_comp(pos);
+            let hits = layers_at(&ectx, point).map(|l| (l.id.0, l.name.clone())).collect();
+            (target, hits)
+        } else {
+            (None, Vec::new())
+        };
+        ui.data_mut(|d| {
+            d.insert_temp(menu_hits_id, hits);
+            d.insert_temp(menu_target_id, target);
+        });
     }
     let context_layers: Vec<u64> =
         app.session.state.selected_layers.iter().filter(|id| comp.layer(**id).is_some_and(|l| !l.switches.locked)).map(|id| id.0).collect();
@@ -1305,6 +1312,10 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if context_layers.is_empty() {
             ui.label(crate::i18n::tr("No unlocked layer selected"));
         } else {
+            let source_layer = ui
+                .data(|d| d.get_temp::<Option<u64>>(menu_target_id))
+                .flatten()
+                .filter(|id| comp.layer(LayerId(*id)).is_some_and(|layer| layer.source.item().is_some()));
             let caps = context_layers.iter().filter_map(|id| comp.layer(effectcraft_engine::project::LayerId(*id))).fold(
                 super::timeline::LayerMenuCaps::default(),
                 |mut caps, layer| {
@@ -1314,7 +1325,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     caps
                 },
             );
-            super::timeline::layer_menu(ui, &context_layers, caps, (&mut app.auto, "viewer.layerMenu"), &mut context_actions);
+            super::timeline::layer_menu(ui, &context_layers, caps, source_layer, (&mut app.auto, "viewer.layerMenu"), &mut context_actions);
         }
         ui.separator();
         if ui.button(copy_frame).clicked() {

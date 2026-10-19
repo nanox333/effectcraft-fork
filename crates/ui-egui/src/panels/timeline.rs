@@ -3916,7 +3916,8 @@ fn layer_context_menu(
         actions.push(("layer.select".into(), json!({"layers": [layer.id.0]})));
     }
     let targets: Vec<u64> = if in_selection { comp.layers.iter().filter(|l| selected.contains(&l.id)).map(|l| l.id.0).collect() } else { vec![layer.id.0] };
-    crate::widgets::context_menu(resp, |ui| layer_menu(ui, &targets, caps, (auto, "timeline.layerMenu"), actions));
+    let source_layer = layer.source.item().map(|_| layer.id.0);
+    crate::widgets::context_menu(resp, |ui| layer_menu(ui, &targets, caps, source_layer, (auto, "timeline.layerMenu"), actions));
 }
 
 /// The layer switches the layer context menus toggle (After Effects lists them after Time):
@@ -3929,6 +3930,7 @@ pub(crate) fn layer_menu(
     ui: &mut egui::Ui,
     layers: &[u64],
     caps: LayerMenuCaps,
+    source_layer: Option<u64>,
     auto: (&mut crate::automation::Registry, &str),
     actions: &mut Vec<(String, serde_json::Value)>,
 ) {
@@ -4010,7 +4012,9 @@ pub(crate) fn layer_menu(
         item(ui, "Send Layer to Back", "layer.arrange", json!({"layers": layers, "to": "back"}));
     });
     ui.menu_button(crate::i18n::tr("Reveal"), |ui| {
-        item(ui, "Reveal Layer Source in Project", "layer.revealSource", json!({"layer": id}));
+        if let Some(source_layer) = source_layer {
+            item(ui, "Reveal Layer Source in Project", "layer.revealSource", json!({"layer": source_layer}));
+        }
         item(ui, "Reveal Composition in Project", "comp.revealInProject", json!({}));
     });
     ui.separator();
@@ -4663,10 +4667,10 @@ mod tests {
         let caps = LayerMenuCaps { vector: true, text: false };
         let (mut auto, mut actions) = (crate::automation::Registry::default(), Vec::new());
         crate::i18n::set_current("zh-hans");
-        let menu = drawn_text(|ui| layer_menu(ui, &[7], caps, (&mut auto, "t"), &mut actions));
+        let menu = drawn_text(|ui| layer_menu(ui, &[7], caps, Some(7), (&mut auto, "t"), &mut actions));
         let effects = drawn_text(|ui| effects_submenu(ui, &[7], &mut |_: &mut egui::Ui, _: &str, _: &str, _: serde_json::Value| {}));
         crate::i18n::set_current("en");
-        let english = drawn_text(|ui| layer_menu(ui, &[7], caps, (&mut auto, "t"), &mut actions));
+        let english = drawn_text(|ui| layer_menu(ui, &[7], caps, Some(7), (&mut auto, "t"), &mut actions));
         for label in ["新建", "图层设置...", "从矢量图层创建形状", "预合成...", "重复", "拆分图层", "删除"] {
             assert!(menu.iter().any(|t| t == label), "{label} missing from {menu:?}");
         }
