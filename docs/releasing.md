@@ -20,7 +20,15 @@ User-facing names say **EffectCraft**. Files, binaries and ids stay lowercase
    ```
 
    Open a PR titled `Release: EffectCraft v0.4.0` with that change (`Cargo.toml` and our crates
-   in `Cargo.lock` only) and merge it.
+   in `Cargo.lock`) and merge it. Before the release build, refresh the bundled About credits
+   from the full checkout and include the generated snapshot in the release preparation:
+
+   ```sh
+   python3 scripts/refresh-contributors.py
+   ```
+
+   This needs Python 3.11+, git and an authenticated `gh`; see [contributors](contributors.md).
+   Review and commit `contributors/contributors.json` so every platform bundles the same credits.
 2. **Check the gate.** Run `cargo xtask ci` on `main` (it runs clippy and the tests in release
    mode, as CI does), and check that `main`'s CI is green on every platform.
 3. **Push `main` to `release`** (a fast-forward): `git push origin main:release`. The `release`

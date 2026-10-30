@@ -10,7 +10,7 @@ this page is the local copy of the decision.
 - Two files, both **compiled into the binary** by the UI crate's `build.rs` (nothing is read from
   disk or the network at run time; the web build has them too):
   - [`contributors/contributors.json`](../contributors/contributors.json): commit stats per GitHub
-    username. **Generated** by `craftrules/scripts/contributors.py`; never hand-edit.
+    username. **Generated** by `scripts/refresh-contributors.py`; never hand-edit.
   - [`contributors/people.toml`](../contributors/people.toml): the names people chose for
     themselves. **Each contributor adds only their own entry**, in their own PR.
 - Each contributor gets one line: GitHub username (always), display name (opt-in, or their synced
@@ -48,8 +48,32 @@ user (or by a maintainer with a `consent_source`). Delete your entry to remove y
 ## Refreshing (maintainers)
 
 ```sh
-python3 ../../craftrules/scripts/contributors.py .           # regenerate + verify; needs git, Python 3.11+, gh
-python3 ../../craftrules/scripts/contributors.py --check .   # verify people.toml only
+python3 scripts/refresh-contributors.py
+python3 -m unittest discover -s scripts/tests -v
 ```
 
-Commit the updated `contributors/contributors.json`. Git author names and emails are never recorded.
+Run from a full checkout with Python 3.11+, git and an authenticated `gh`. The local script
+uses GitHub to resolve commit authors and merged PR authors to usernames, counts non-merge
+commits and their changes from local `HEAD` (or `--ref`), including verified human co-authors,
+and verifies each opt-in entry against its git blame authors. Only verified entries can supply names; no git author names or emails are
+recorded. Model authors and trailers are deduplicated per commit, including older `Claude-Session`
+trailers that do not identify a model version.
+
+The default source is `storytold/effectcraft`; forks can pass `--repo owner/repository` if it
+contains their local commits. To refresh against newer upstream history without changing the
+checkout, fetch it first and select that revision explicitly:
+
+```sh
+git fetch https://github.com/storytold/effectcraft.git main:refs/remotes/upstream/main
+python3 scripts/refresh-contributors.py --ref refs/remotes/upstream/main
+```
+
+The snapshot records the selected revision and its date. Opt-in names still come from this
+checkout's committed `people.toml`; other contributors appear by username.
+
+A shallow checkout or failed API request stops the refresh
+without replacing the existing snapshot.
+
+Commit the updated `contributors/contributors.json` before building a release. Credits remain
+available offline on native and web builds; an installed app needs a new build to show the
+refreshed snapshot. See [the release checklist](releasing.md#cutting-a-release).
