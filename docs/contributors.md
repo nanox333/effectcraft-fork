@@ -36,3 +36,37 @@ sync_github_name = true   # use the name on your public GitHub profile as displa
 
 Names show for entries committed by their own user (or by a maintainer with a `consent_source`).
 Delete your entry to remove your names. Git author names and emails are never recorded.
+
+## Refreshing release credits
+
+The release workflow refreshes credits once for its exact commit before any source build.
+Its read-only `credits` job calls the shared `refresh-contributors.yml` workflow, and the
+`release` job waits for it and passes the snapshot artifact to every source-build target.
+Refresh failure blocks the release. The snapshot is embedded in the applications; it is
+not committed back to the repository or published as a standalone release asset.
+
+The app-side generator uses full Git history for statistics and GitHub's API for account
+identities and merged PRs. Names are enabled only for self-authored entries (or recorded
+consent committed by someone with repository write access). Public profile names are
+queried only for verified entries that opt into synchronization. Model credits come from
+explicit model Co-Authored-By trailers, never guesses from human author names or emails.
+GitHub-linked human co-authors share the commit's statistics; contributor row totals can
+therefore exceed the repository commit/line totals. Commits with no linked account or
+unambiguous merged PR author are counted as unattributed.
+
+To refresh a local snapshot, use Python 3.11+, Git and an authenticated `gh` CLI:
+
+```sh
+python3 scripts/refresh-contributors.py --repo storytold/effectcraft
+```
+
+Check out the intended release commit with full history first. The command replaces only
+`contributors/contributors.json`, atomically after collection succeeds. Local development
+builds continue to use the checked-in snapshot until it is refreshed.
+
+Generator tests use temporary Git repositories and fixture API responses, without network
+access:
+
+```sh
+python3 -m unittest discover -s scripts/tests -v
+```
